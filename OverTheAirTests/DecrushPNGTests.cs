@@ -4,6 +4,8 @@ using OverTheAir.PNGDecrusher;
 using System.IO;
 using System.Collections.Generic;
 using System.Linq;
+using System.Collections;
+using System.Text;
 
 namespace OverTheAirTests
 {
@@ -39,10 +41,7 @@ namespace OverTheAirTests
             // * We want to avoid having to deal with precompression row filters etc. so we just fix the zlib headers and then defer to .net
         }
 
-        [TestMethod]
-        public void TestChunksAreCorrectlyParsed()
-        {
-            byte[] singleIDAT10x10White = 
+        byte[] singleIDAT10x10White = 
             {
                 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
                 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x0a,
@@ -57,6 +56,9 @@ namespace OverTheAirTests
                 0xae, 0x42, 0x60, 0x82
             };
 
+        [TestMethod]
+        public void TestChunksAreCorrectlyParsed()
+        {
             using (MemoryStream stream = new MemoryStream(singleIDAT10x10White))
             {
                 PNGChunk[] chunks = PNGDecrusher.ChunksFromStream(stream).ToArray();
@@ -66,6 +68,23 @@ namespace OverTheAirTests
                 Assert.AreEqual("IDAT", idatChunk.TypeString);
                 Assert.AreEqual(PNGChunk.ChunkType.IDAT, idatChunk.Type);
                 Assert.AreEqual(17, idatChunk.Data.Length);
+            }
+        }
+
+        [TestMethod]
+        public void TestWritingChunksProducesIdenticalBytesAsInput()
+        {
+            byte[] input = singleIDAT10x10White;
+            using (MemoryStream stream = new MemoryStream(singleIDAT10x10White))
+            {
+                PNGChunk[] chunks = PNGDecrusher.ChunksFromStream(stream).ToArray();
+
+                MemoryStream output = new MemoryStream();
+                PNGDecrusher.WriteChunksWithHeader(chunks, output);
+
+                byte[] outputBytes = output.ToArray();
+
+                CollectionAssert.AreEqual(input, outputBytes);
             }
         }
     }

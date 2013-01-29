@@ -10,6 +10,8 @@ namespace OverTheAir.PNGDecrusher
 {
     public class PNGDecrusher
     {
+        private static byte[] _PNGHeader = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
+
         public static IEnumerable<PNGChunk> ChunksFromStream(Stream stream)
         {
             using (BinaryReader reader = new BinaryReader(stream))
@@ -52,10 +54,37 @@ namespace OverTheAir.PNGDecrusher
 
         private static bool TryReadPNGHeaderFromReader(BinaryReader reader)
         {
-            byte[] PNGHeader = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
-            byte[] actualHeader = reader.ReadBytes(PNGHeader.Length);
+            byte[] actualHeader = reader.ReadBytes(_PNGHeader.Length);
 
-            return ((IStructuralEquatable)actualHeader).Equals(PNGHeader, StructuralComparisons.StructuralEqualityComparer);
+            return ((IStructuralEquatable)actualHeader).Equals(_PNGHeader, StructuralComparisons.StructuralEqualityComparer);
+        }
+
+        public static void WriteChunksWithHeader(IEnumerable<PNGChunk> chunks, Stream output)
+        {
+            using (BinaryWriter writer = new BinaryWriter(output))
+            {
+                writer.Write(_PNGHeader);
+
+                foreach (PNGChunk chunk in chunks)
+                {
+                    WriteChunkToWriter(chunk, writer);
+                }
+            }
+        }
+
+        private static void WriteChunkToWriter(PNGChunk chunk, BinaryWriter writer)
+        {
+            writer.WriteNetworkOrder((uint)chunk.Data.Length);
+            
+            byte[] typeString = Encoding.UTF8.GetBytes(chunk.TypeString);
+            if (typeString.Length != 4)
+            {
+                throw new InvalidDataException("PNG chunk type must be a 4 character string");
+            }
+
+            writer.Write(typeString);
+            writer.Write(chunk.Data);
+            writer.WriteNetworkOrder(chunk.DataCRC);
         }
     }
 }
