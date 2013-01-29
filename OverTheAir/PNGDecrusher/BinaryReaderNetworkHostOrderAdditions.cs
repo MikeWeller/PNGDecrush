@@ -12,5 +12,10 @@ namespace OverTheAir.PNGDecrusher
         {
             return (uint)System.Net.IPAddress.NetworkToHostOrder((int)reader.ReadUInt32());
         }
+
+        public static void WriteNetworkOrder(this BinaryWriter writer, uint value)
+        {
+            writer.Write((uint)System.Net.IPAddress.HostToNetworkOrder((int)value));
+        }
     }
 }
