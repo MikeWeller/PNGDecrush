@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Collections;
 using System.Text;
+using System.IO.Compression;
 
 namespace OverTheAirTests
 {
@@ -15,15 +16,13 @@ namespace OverTheAirTests
         [TestMethod]
         public void fdaf()
         {
-            // What does apple do:
+            // What apple's pngcrush extension (-iphone) does:
             //
             // * Adds the CgBI chunk to the start of the file
             // * Removes the zlib header+checksum from IDAT chunks (leaving just raw deflate data)
             // * RGB/RGBA images are stored in BGR/BGRA order
             // * Image pixels are premultiplied with the alpha. 
             //
-
-            // We want to use as much of the standard .net class libraries as possible
 
             // So, what we could do is:
             //
@@ -34,6 +33,9 @@ namespace OverTheAirTests
             // * Reverse the byte swap
             // * Reverse the premultiplied alpha
             // * Done?
+            //
+            // Alternatively, we could take the deflated chunk data, and reverse the line filters ourselves (they aren't complicated)
+            // to access the raw pixel data. This would mean we don't have to write back modified chunks and then re-read with .net
 
             // Other notes:
             //
@@ -86,6 +88,23 @@ namespace OverTheAirTests
 
                 CollectionAssert.AreEqual(input, outputBytes);
             }
+        }
+
+        [TestMethod]
+        public void TestAppleChunkIsRemovedWhenFixing()
+        {
+            IEnumerable<PNGChunk> chunks = new List<PNGChunk>()
+            {
+                new PNGChunk(PNGChunk.StringFromType(PNGChunk.ChunkType.CgBI), new byte[] { 0x01, 0x02, 0x03 }, 12345),
+                new PNGChunk(PNGChunk.StringFromType(PNGChunk.ChunkType.IDAT), new byte[] { 0x01, 0x02, 0x03 }, 12345),
+                new PNGChunk(PNGChunk.StringFromType(PNGChunk.ChunkType.IDAT), new byte[] { 0x01, 0x02, 0x03 }, 12345)
+            };
+
+            IEnumerable<PNGChunk> fixedChunks = PNGDecrusher.DecrushChunks(chunks);
+
+            Assert.AreEqual(2, fixedChunks.Count());
+            Assert.AreEqual(PNGChunk.ChunkType.IDAT, fixedChunks.First().Type);
+            Assert.AreEqual(PNGChunk.ChunkType.IDAT, fixedChunks.Last().Type);
         }
     }
 }

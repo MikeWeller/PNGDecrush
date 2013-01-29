@@ -10,7 +10,8 @@ namespace OverTheAir.PNGDecrusher
         public enum ChunkType
         {
             Unknown,
-            IDAT
+            IDAT,
+            CgBI // apple's pngcrush -iphone chunk
         }
 
         public ChunkType Type { get; private set; }
@@ -26,12 +27,20 @@ namespace OverTheAir.PNGDecrusher
             this.DataCRC = dataCRC;
         }
 
-        private static PNGChunk.ChunkType TypeFromString(string type)
+        public static string StringFromType(ChunkType type)
+        {
+            return type.ToString();
+        }
+
+        public static PNGChunk.ChunkType TypeFromString(string type)
         {
             switch (type)
             {
                 case "IDAT":
-                    return PNGChunk.ChunkType.IDAT;
+                    return ChunkType.IDAT;
+
+                case "CgBI":
+                    return ChunkType.CgBI;
 
                 default:
                     return PNGChunk.ChunkType.Unknown;

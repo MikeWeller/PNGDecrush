@@ -86,5 +86,20 @@ namespace OverTheAir.PNGDecrusher
             writer.Write(chunk.Data);
             writer.WriteNetworkOrder(chunk.DataCRC);
         }
+
+        public static IEnumerable<PNGChunk> DecrushChunks(IEnumerable<PNGChunk> chunks)
+        {
+            IEnumerable<PNGChunk> chunksNoCgBI = ChunksByRemovingAppleCgBIChunks(chunks);
+
+            // fix IDAT zlib headers
+
+            return chunksNoCgBI;
+
+        }
+
+        private static IEnumerable<PNGChunk> ChunksByRemovingAppleCgBIChunks(IEnumerable<PNGChunk> chunks)
+        {
+            return chunks.Where(c => c.Type != PNGChunk.ChunkType.CgBI);
+        }
     }
 }
