@@ -14,42 +14,30 @@ namespace OverTheAirTests
     [TestClass]
     public class DecrushPNGTests
     {
-        [TestMethod]
-        public void fdaf()
-        {
-            // What apple's pngcrush extension (-iphone) does:
-            //
-            // * Adds the CgBI chunk to the start of the file
-            // * Removes the zlib header+checksum from IDAT chunks (leaving just raw deflate data)
-            // * RGB/RGBA images are stored in BGR/BGRA order
-            // * Image pixels are premultiplied with the alpha. 
-            //
+        // What apple's pngcrush extension (-iphone) does:
+        //
+        // * Adds the CgBI chunk to the start of the file
+        // * Removes the zlib header+checksum from IDAT chunks (leaving just raw deflate data)
+        // * RGB/RGBA images are stored in BGR/BGRA order
+        // * Image pixels are premultiplied with the alpha. 
+        //
 
-            // Why lots of existing solutions are broken:
-            //
-            // * They do not reverse the precompression line filters before byte swapping.
-            //   This will cause sometimes subtle, sometimes not-so-subtle artifacts in the resulting image
-            // * They do not handle multiple IDAT chunks
-            //
+        // Why lots of existing solutions are broken:
+        //
+        // * They do not reverse the precompression line filters before byte swapping.
+        //   This will cause sometimes subtle, sometimes not-so-subtle artifacts in the resulting image
+        // * They do not handle multiple IDAT chunks
+        //
 
-            // So, what we could do is:
-            //
-            // * Remove the CgBI chunk
-            // * Inflate the chunk data and deflate again with the headers
-            //
-            // * Read this new PNG into .net's standard image manipulation classes - so we don't have to decode the line filters or anything
-            // * Reverse the byte swap
-            // * Reverse the premultiplied alpha
-            // * Done?
-            //
-            // Alternatively, we could take the deflated chunk data, and reverse the line filters ourselves (they aren't complicated)
-            // to access the raw pixel data. This would mean we don't have to write back modified chunks and then re-read with .net
-
-            // Other notes:
-            //
-            // * We need to make sure we're dealing with RGB or RGBA, fail on anything else
-            // * We want to avoid having to deal with precompression row filters etc. so we just fix the zlib headers and then defer to .net
-        }
+        // So, what we do is:
+        //
+        // * Remove the CgBI chunk
+        // * Inflate the chunk data and deflate again with the zlib headers
+        // * Read this new PNG into .net's standard image manipulation classes
+        // * Reverse the byte swap
+        // * Reverse the premultiplied alpha
+        // * Done!
+        //
 
         byte[] Simple10x10WhitePNG = 
             {
@@ -79,7 +67,9 @@ namespace OverTheAirTests
                 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82
             };
 
-        byte[] CrushedFiftyPercentAlphaBlue10x10 =  {
+        // somehow i messed up, and this actually contains pixels with RGBA(4, 50, 255, 127)
+        // NOT pure blue
+        byte[] CrushedFiftyPercentAlphaKindaBlue10x10 =  {
             0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x04,
             0x43, 0x67, 0x42, 0x49, 0x50, 0x00, 0x20, 0x02, 0x2b, 0xd5, 0xb3, 0x7f,
             0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x0a,
@@ -150,15 +140,15 @@ namespace OverTheAirTests
             IEnumerable<PNGChunk> chunks = new List<PNGChunk>()
             {
                 new PNGChunk(PNGChunk.StringFromType(PNGChunk.ChunkType.CgBI), new byte[] { 0x01, 0x02, 0x03 }, 12345),
-                new PNGChunk(PNGChunk.StringFromType(PNGChunk.ChunkType.IDAT), new byte[] { 0x01, 0x02, 0x03 }, 12345),
-                new PNGChunk(PNGChunk.StringFromType(PNGChunk.ChunkType.IDAT), new byte[] { 0x01, 0x02, 0x03 }, 12345)
+                new PNGChunk(PNGChunk.StringFromType(PNGChunk.ChunkType.IDAT), DeflateBytes(new byte[] { 0x01, 0x02, 0x03 }), 12345),
+                new PNGChunk("IEND", new byte[] { }, 0xFFFFFF)
             };
 
             IEnumerable<PNGChunk> fixedChunks = PNGDecrusher.DecrushChunks(chunks);
 
             Assert.AreEqual(2, fixedChunks.Count());
-            Assert.AreEqual(PNGChunk.ChunkType.IDAT, fixedChunks.First().Type);
-            Assert.AreEqual(PNGChunk.ChunkType.IDAT, fixedChunks.Last().Type);
+            Assert.AreEqual(PNGChunk.ChunkType.IDAT, fixedChunks.ToArray()[0].Type);
+            Assert.AreEqual("IEND", fixedChunks.ToArray()[1].TypeString);
         }
 
         [TestMethod]
@@ -230,24 +220,49 @@ namespace OverTheAirTests
             List<PNGChunk> chunks = new List<PNGChunk>()
                 {
                     new PNGChunk(PNGChunk.StringFromType(PNGChunk.ChunkType.CgBI), new byte[] { }, 0),
-                    new PNGChunk(PNGChunk.StringFromType(PNGChunk.ChunkType.IDAT), deflatedOriginalData, 0),
                     new PNGChunk(PNGChunk.StringFromType(PNGChunk.ChunkType.IDAT), deflatedOriginalData, 0)
                 };
 
             IEnumerable<PNGChunk> decrushedChunks = PNGDecrusher.DecrushChunks(chunks);
-            Assert.AreEqual(2, decrushedChunks.Count());
+            Assert.AreEqual(1, decrushedChunks.Count());
 
-            byte[] zlibData1 = decrushedChunks.First().Data;
-            byte[] zlibData2 = decrushedChunks.Last().Data;
-            
-            byte[] dezlibbedData1 = DecompressZlibBytes(zlibData1);
-            byte[] dezlibbedData2 = DecompressZlibBytes(zlibData2);
+            byte[] zlibData = decrushedChunks.First().Data;
+            byte[] dezlibbedData = DecompressZlibBytes(zlibData);
 
-            Assert.AreEqual(originalData.Length, dezlibbedData1.Length);
-            CollectionAssert.AreEqual(originalData, dezlibbedData1);
+            Assert.AreEqual(originalData.Length, dezlibbedData.Length);
+            CollectionAssert.AreEqual(originalData, dezlibbedData);
+        }
 
-            Assert.AreEqual(originalData.Length, dezlibbedData2.Length);
-            CollectionAssert.AreEqual(originalData, dezlibbedData2);
+        [TestMethod]
+        public void TestMultipleIDATChunksAreTreatedAsASingleDeflatedBuffer()
+        {
+            byte[] originalData = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0xA0 };
+            byte[] deflateOriginalData = DeflateBytes(originalData);
+
+            int splitAtIndex = 4;
+            byte[] chunk1Data = deflateOriginalData.Take(splitAtIndex).ToArray();
+            byte[] chunk2Data = deflateOriginalData.Skip(splitAtIndex).ToArray();
+
+            List<PNGChunk> chunks = new List<PNGChunk>()
+                {
+                    new PNGChunk(PNGChunk.StringFromType(PNGChunk.ChunkType.CgBI), new byte[] { }, 0),
+                    new PNGChunk(PNGChunk.StringFromType(PNGChunk.ChunkType.IDAT), chunk1Data, 0),
+                    new PNGChunk(PNGChunk.StringFromType(PNGChunk.ChunkType.IDAT), chunk2Data, 0)
+                };
+
+            IEnumerable<PNGChunk> decrushedChunks = PNGDecrusher.DecrushChunks(chunks);
+
+            byte[] zlibChunk1 = decrushedChunks.First().Data;
+            byte[] zlibChunk2 = decrushedChunks.Last().Data;
+
+            byte[] zlibChunksCombined = new byte[zlibChunk1.Length + zlibChunk2.Length];
+            zlibChunk1.CopyTo(zlibChunksCombined, 0);
+            zlibChunk2.CopyTo(zlibChunksCombined, zlibChunk1.Length);
+
+            byte[] dezlibbedData = DecompressZlibBytes(zlibChunksCombined);
+
+            Assert.AreEqual(originalData.Length, dezlibbedData.Length);
+            CollectionAssert.AreEqual(originalData, dezlibbedData);
         }
 
         private Bitmap BitmapFromDecrushedImage(byte[] imageData)
@@ -256,16 +271,15 @@ namespace OverTheAirTests
             using (MemoryStream decrushed = new MemoryStream())
             {
                 PNGDecrusher.DecrushPNGStreamToStream(crushed, decrushed);
-                byte[] decrushedBytes = decrushed.ToArray();
-
-                return new Bitmap(new MemoryStream(decrushedBytes));
+                decrushed.Position = 0;
+                return new Bitmap(decrushed);
             }
         }
 
         [TestMethod]
         public void TestDecrushedImageCanBeLoadedByDotNetImageClasses()
         {
-            using (Bitmap bitmap = BitmapFromDecrushedImage(CrushedFiftyPercentAlphaBlue10x10))
+            using (Bitmap bitmap = BitmapFromDecrushedImage(CrushedFiftyPercentAlphaKindaBlue10x10))
             {
                 Assert.AreEqual(bitmap.Size, new Size(10, 10));
                 Assert.AreEqual(System.Drawing.Imaging.PixelFormat.Format32bppArgb, bitmap.PixelFormat);
@@ -274,14 +288,31 @@ namespace OverTheAirTests
         }
 
         [TestMethod]
+        public void Debugging()
+        {
+            string inputFilePath = @"c:\Users\mike\Dropbox\OverTheAirTestFiles\Icon-72@2x_crushed.png";
+            string outputFilePath = @"c:\Users\mike\Dropbox\OverTheAirTestFiles\_test_decrushed.png";
+
+            using (FileStream inputStream = new FileStream(inputFilePath, FileMode.Open))
+            using (FileStream outputStream = new FileStream(outputFilePath, FileMode.Create))
+            {
+                PNGDecrusher.DecrushPNGStreamToStream(inputStream, outputStream);
+            }
+
+            IEnumerable<PNGChunk> inputChunks = PNGChunkParser.ChunksFromStream(new FileStream(inputFilePath, FileMode.Open));
+            IEnumerable<PNGChunk> outputChunks = PNGChunkParser.ChunksFromStream(new FileStream(outputFilePath, FileMode.Open));
+
+        }
+
+        [TestMethod]
         public void TestDecrushedImagesHavePremultipliedAlphaAndPixelByteOrderFixed()
         {
-            using (Bitmap bitmap = BitmapFromDecrushedImage(CrushedFiftyPercentAlphaBlue10x10))
+            using (Bitmap bitmap = BitmapFromDecrushedImage(CrushedFiftyPercentAlphaKindaBlue10x10))
             {
                 Assert.AreEqual(bitmap.Size, new Size(10, 10));
 
-                Color pixel = bitmap.GetPixel(1, 1);
-                Assert.AreEqual(Color.FromArgb(128, 0, 0, 255), pixel);
+                Color pixel = bitmap.GetPixel(4, 4);
+                Assert.AreEqual(Color.FromArgb(127, 4, 50, 255), pixel);
             }
         }
 
@@ -303,7 +334,7 @@ namespace OverTheAirTests
             {
                  Simple10x10WhitePNG,
                  Crushed10x10White,
-                 CrushedFiftyPercentAlphaBlue10x10
+                 CrushedFiftyPercentAlphaKindaBlue10x10
             };
 
             foreach (byte[] png in validPNGs)
@@ -316,6 +347,26 @@ namespace OverTheAirTests
                     Assert.AreEqual(expectedCRC, recalculatedCRC);
                 }
             }
+        }
+
+        [TestMethod]
+        public void TestSplitBufferWithNoOffsetsReturnsOriginalBuffer()
+        {
+            byte[] data = new byte[] { 0, 1, 2 };
+            IEnumerable<byte[]> split = PNGDecrusher.SplitBufferAtOffsets(data, new List<int>());
+            Assert.AreEqual(1, split.Count());
+            CollectionAssert.AreEqual(data, split.First());
+        }
+
+        [TestMethod]
+        public void TestSplitBufferWithOffsetsReturnsCorrectBuffers()
+        {
+            byte[] data = new byte[] { 0, 1, 2 };
+            IEnumerable<byte[]> split = PNGDecrusher.SplitBufferAtOffsets(data, new List<int>() { 1 });
+            Assert.AreEqual(2, split.Count());
+
+            CollectionAssert.AreEqual(new byte[] { 0 }, split.First());
+            CollectionAssert.AreEqual(new byte[] { 1, 2 }, split.Last());
         }
     }
 }
