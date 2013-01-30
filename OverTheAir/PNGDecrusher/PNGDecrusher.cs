@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Text;
 using System.Web;
 
 namespace OverTheAir.PNGDecrusher
@@ -19,7 +20,14 @@ namespace OverTheAir.PNGDecrusher
 
         public static IEnumerable<PNGChunk> DecrushChunks(IEnumerable<PNGChunk> chunks)
         {
-            return FixZlibHeadersForIdatChunks(ChunksByRemovingAppleCgBIChunks(chunks));
+            IEnumerable<PNGChunk> result = FixZlibHeadersForIdatChunks(ChunksByRemovingAppleCgBIChunks(chunks));
+            if (result.Count() == chunks.Count())
+            {
+                // there wasn't an Apple CgBI removed, throw an exception
+                throw new InvalidDataException("Could not find a CgBI chunk");
+            }
+
+            return result;
         }
 
         private static IEnumerable<PNGChunk> FixZlibHeadersForIdatChunks(IEnumerable<PNGChunk> chunks)
@@ -51,17 +59,26 @@ namespace OverTheAir.PNGDecrusher
 
                 byte[] chunkData = zlibCompressed.ToArray();
 
-                Ionic.Crc.CRC32 crc32calculator = new Ionic.Crc.CRC32();
-                crc32calculator.SlurpBlock(chunkData, 0, chunkData.Length);
-                int crc32 = crc32calculator.Crc32Result;
+                uint crc32 = CalculateCRCForChunk(chunk.TypeString, chunkData);
 
-                return new PNGChunk(chunk.TypeString, zlibCompressed.ToArray(), (uint)crc32);
+                return new PNGChunk(chunk.TypeString, zlibCompressed.ToArray(), crc32);
             }
         }
 
         private static IEnumerable<PNGChunk> ChunksByRemovingAppleCgBIChunks(IEnumerable<PNGChunk> chunks)
         {
             return chunks.Where(c => c.Type != PNGChunk.ChunkType.CgBI);
+        }
+
+        public static uint CalculateCRCForChunk(string chunkType, byte[] chunkData)
+        {
+            byte[] chunkTypeBytes = Encoding.UTF8.GetBytes(chunkType);
+
+            Ionic.Crc.CRC32 crc32calculator = new Ionic.Crc.CRC32();
+            crc32calculator.SlurpBlock(chunkTypeBytes, 0, chunkTypeBytes.Length);
+            crc32calculator.SlurpBlock(chunkData, 0, chunkData.Length);
+            int crc32 = crc32calculator.Crc32Result;
+            return (uint)crc32;
         }
     }
 }
