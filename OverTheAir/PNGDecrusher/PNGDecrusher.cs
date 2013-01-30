@@ -13,94 +13,120 @@ namespace OverTheAir.PNGDecrusher
 {
     public class PNGDecrusher
     {
-        public static void DecrushPNGStreamToStream(Stream input, Stream output)
+        public static void Decrush(Stream input, Stream output)
         {
-            IEnumerable<PNGChunk> chunks = PNGChunkParser.ChunksFromStream(input);
-            IEnumerable<PNGChunk> decrushed = DecrushChunks(chunks);
+            IEnumerable<PNGChunk> decrushedChunks = DecrushChunksFromStream(input);
+            ReverseApplePixelOptimizationInChunks(decrushedChunks, output);
+        }
 
+        private static IEnumerable<PNGChunk> DecrushChunksFromStream(Stream input)
+        {
+            return DecrushChunks(PNGChunkParser.ChunksFromStream(input));
+        }
+
+        private static void ReverseApplePixelOptimizationInChunks(IEnumerable<PNGChunk> pngChunks, Stream output)
+        {
             using (MemoryStream pngSoFar = new MemoryStream())
             {
-                PNGChunkParser.WriteChunksWithHeader(decrushed, pngSoFar);
+                PNGChunkParser.WriteChunksWithHeader(pngChunks, pngSoFar);
                 pngSoFar.Position = 0;
-                DecrushPixelsInPNG(pngSoFar, output);
+                ReverseApplePixelOptimizations(pngSoFar, output);
             }
         }
 
-        public static void DecrushPixelsInPNG(Stream pngInputStream, Stream outputStream)
+        public static void ReverseApplePixelOptimizations(Stream pngInputStream, Stream outputStream)
         {
             using (Bitmap bitmap = new Bitmap(pngInputStream))
             {
                 BitmapData bitmapData = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height), ImageLockMode.ReadWrite, bitmap.PixelFormat);
-
-                int totalBytes = bitmapData.Stride * bitmapData.Height;
-                byte[] pixelData = new byte[totalBytes];
-
-                bool hasAlpha;
-                uint bytesPerPixel;
-
-                switch (bitmapData.PixelFormat)
                 {
-                    case PixelFormat.Format32bppArgb:
-                        hasAlpha = true;
-                        bytesPerPixel = 4;
-                        break;
-
-                    case PixelFormat.Format32bppRgb:
-                        hasAlpha = false;
-                        bytesPerPixel = 3;
-                        break;
-
-                    default:
-                        throw new InvalidDataException("Only 32 bit RGB(A) PNGs are supported by PNGDecrusher");
+                    FixPixelsInBitmapData(bitmapData);
                 }
-
-                System.Runtime.InteropServices.Marshal.Copy(bitmapData.Scan0, pixelData, 0, pixelData.Length);
-
-                for (uint i = 0; i < totalBytes; i += bytesPerPixel)
-                {
-                    // Swap R and B (0th and 2nd bytes)
-                    byte temp = pixelData[i + 2];
-                    pixelData[i + 2] = pixelData[i + 0];
-                    pixelData[i + 0] = temp;
-
-                    if (hasAlpha)
-                    {
-                        ReversePremultipliedAlpha(pixelData, i);
-                    }
-                }
-
-                System.Runtime.InteropServices.Marshal.Copy(pixelData, 0, bitmapData.Scan0, pixelData.Length);
                 bitmap.UnlockBits(bitmapData);
-
                 bitmap.Save(outputStream, ImageFormat.Png);
+            }
+        }
+
+        private static void FixPixelsInBitmapData(BitmapData bitmapData)
+        {
+            int totalBytes = bitmapData.Stride * bitmapData.Height;
+            byte[] pixelData = new byte[totalBytes];
+
+            bool hasAlpha = BitmapDataHasAlpha(bitmapData);
+            uint bytesPerPixel = BytesPerPixelFromBitmapData(bitmapData);
+
+            System.Runtime.InteropServices.Marshal.Copy(bitmapData.Scan0, pixelData, 0, pixelData.Length);
+
+            for (uint i = 0; i < totalBytes; i += bytesPerPixel)
+            {
+                ReverseAppleByteSwap(pixelData, i);
+
+                if (hasAlpha)
+                {
+                    ReversePremultipliedAlpha(pixelData, i);
+                }
+            }
+
+            System.Runtime.InteropServices.Marshal.Copy(pixelData, 0, bitmapData.Scan0, pixelData.Length);
+        }
+
+        private static void ReverseAppleByteSwap(byte[] pixelData, uint i)
+        {
+            byte temp = pixelData[i + 2];
+            pixelData[i + 2] = pixelData[i + 0];
+            pixelData[i + 0] = temp;
+        }
+
+        private static uint BytesPerPixelFromBitmapData(BitmapData bitmapData)
+        {
+            switch (bitmapData.PixelFormat)
+            {
+                case PixelFormat.Format32bppArgb:
+                    return 4;
+
+                case PixelFormat.Format32bppRgb:
+                    return 3;
+
+                default:
+                    throw new InvalidDataException("Only 32 bit RGB(A) PNGs are supported by PNGDecrusher");
+            }
+        }
+
+        private static bool BitmapDataHasAlpha(BitmapData bitmapData)
+        {
+            switch (bitmapData.PixelFormat)
+            {
+                case PixelFormat.Format32bppArgb:
+                    return true;
+
+                case PixelFormat.Format32bppRgb:
+                    return false;
+
+                default:
+                    throw new InvalidDataException("Only 32 bit RGB(A) PNGs are supported by PNGDecrusher");
             }
         }
 
         private static void ReversePremultipliedAlpha(byte[] pixelData, uint startOffset)
         {
-            byte red = pixelData[startOffset + 0];
-            byte green = pixelData[startOffset + 1];
-            byte blue = pixelData[startOffset + 2];
+            // premultipliedValue = originalValue * (alpha / 255)
+            //                    = (originalValue * alpha) / 255
+            // therefore
+            //
+            // oldValue = (premultipliedValue * 255) / alpha
+
             byte alpha = pixelData[startOffset + 3];
 
-            if (alpha == 0)
-            {
-                return;
-            }
-
-            red = (byte)((red * 255) / alpha);
-            green = (byte)((green * 255) / alpha);
-            blue = (byte)((blue * 255) / alpha);
-
-            pixelData[startOffset + 0] = red;
-            pixelData[startOffset + 1] = green;
-            pixelData[startOffset + 2] = blue;
+            pixelData[startOffset + 0] = (byte)((pixelData[startOffset + 0] * 255) / alpha);
+            pixelData[startOffset + 1] = (byte)((pixelData[startOffset + 1] * 255) / alpha);
+            pixelData[startOffset + 2] = (byte)((pixelData[startOffset + 2] * 255) / alpha);
         }
 
         public static IEnumerable<PNGChunk> DecrushChunks(IEnumerable<PNGChunk> chunks)
         {
             IEnumerable<PNGChunk> chunksMinusAppleChunk = ChunksByRemovingAppleCgBIChunks(chunks);
             IEnumerable<PNGChunk> result = RecompressIDATChunksFromDeflateToZlib(chunksMinusAppleChunk);
+            
             if (result.Count() == chunks.Count())
             {
                 // there wasn't an Apple CgBI removed, throw an exception
@@ -110,28 +136,26 @@ namespace OverTheAir.PNGDecrusher
             return result;
         }
 
-        private static IEnumerable<PNGChunk> RecompressIDATChunksFromDeflateToZlib(IEnumerable<PNGChunk> chunks)
+        private static IEnumerable<PNGChunk> RecompressIDATChunksFromDeflateToZlib(IEnumerable<PNGChunk> inputChunks)
         {
             // need to combine the data for multiple IDAT chunks and deflate it together
             // then split again at similar byte offsets... arg
 
-            IEnumerable<PNGChunk> idatChunks = chunks.Where(c => c.Type == PNGChunk.ChunkType.IDAT);
-            IEnumerable<int> splitOffsets = idatChunks.Select(c => c.Data.Length).Take(idatChunks.Count() - 1);
+            IEnumerable<PNGChunk> idatChunks = inputChunks.Where(c => c.Type == PNGChunk.ChunkType.IDAT);
 
             byte[] combinedChunkData = CombinedChunkData(idatChunks);
             byte[] zlibFixed = RecompressDeflateDataAsZlib(combinedChunkData);
 
-            IEnumerable<byte[]> newIDATDataChunks = SplitBufferAtOffsets(zlibFixed, splitOffsets);
+            IEnumerable<int> offsetsWeNeedToSplitAt = idatChunks.Select(c => c.Data.Length).Take(idatChunks.Count() - 1);
+            IEnumerable<byte[]> newIDATDataChunks = SplitBufferAtOffsets(zlibFixed, offsetsWeNeedToSplitAt);
 
-            IEnumerable<PNGChunk> newIDATChunks = newIDATDataChunks.Select(c => IDATChunkFrombytes(c));
+            IEnumerable<PNGChunk> newIDATChunks = newIDATDataChunks.Select(bytes => IDATChunkFrombytes(bytes));
 
-            List<PNGChunk> originalMinusIDAT = chunks.Where(c => c.Type != PNGChunk.ChunkType.IDAT).ToList();
+            int indexOfFirstOriginalIdat = inputChunks.Select((c, i) => new { index = i, chunk = c }).First(o => o.chunk.Type == PNGChunk.ChunkType.IDAT).index;
 
-            int indexOfFirstOriginalIdat = chunks.Select((c, i) => new { index = i, chunk = c }).First(o => o.chunk.Type == PNGChunk.ChunkType.IDAT).index;
-
-            originalMinusIDAT.InsertRange(indexOfFirstOriginalIdat, newIDATChunks);
-
-            return originalMinusIDAT;
+            List<PNGChunk> result = inputChunks.Where(c => c.Type != PNGChunk.ChunkType.IDAT).ToList();
+            result.InsertRange(indexOfFirstOriginalIdat, newIDATChunks);
+            return result;
         }
 
         private static PNGChunk IDATChunkFrombytes(byte[] bytes)
@@ -142,14 +166,14 @@ namespace OverTheAir.PNGDecrusher
 
         public static IEnumerable<byte[]> SplitBufferAtOffsets(byte[] input, IEnumerable<int> offsets)
         {
-            List<int> offsetsWithLastIndex = offsets.ToList();
-            offsetsWithLastIndex.Add(input.Length);
+            List<int> offsetsIncludingEndOfBuffer = offsets.ToList();
+            offsetsIncludingEndOfBuffer.Add(input.Length);
 
             List<byte[]> result = new List<byte[]>();
             int nextPositionToCopyFrom = 0;
             int lastOffset = 0;
 
-            foreach (int i in offsetsWithLastIndex)
+            foreach (int i in offsetsIncludingEndOfBuffer)
             {
                 byte[] chunk = new byte[i - lastOffset];
                 Array.Copy(input, nextPositionToCopyFrom, chunk, 0, chunk.Length);
