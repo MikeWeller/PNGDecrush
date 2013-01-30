@@ -117,6 +117,11 @@ namespace OverTheAir.PNGDecrusher
 
             byte alpha = pixelData[startOffset + 3];
 
+            if (alpha == 0)
+            {
+                return;
+            }
+
             pixelData[startOffset + 0] = (byte)((pixelData[startOffset + 0] * 255) / alpha);
             pixelData[startOffset + 1] = (byte)((pixelData[startOffset + 1] * 255) / alpha);
             pixelData[startOffset + 2] = (byte)((pixelData[startOffset + 2] * 255) / alpha);
