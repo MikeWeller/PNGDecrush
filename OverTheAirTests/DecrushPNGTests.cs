@@ -79,6 +79,18 @@ namespace OverTheAirTests
                 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82
             };
 
+        byte[] CrushedFiftyPercentAlphaBlue10x10 =  {
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x04,
+            0x43, 0x67, 0x42, 0x49, 0x50, 0x00, 0x20, 0x02, 0x2b, 0xd5, 0xb3, 0x7f,
+            0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x0a,
+            0x00, 0x00, 0x00, 0x0a, 0x08, 0x06, 0x00, 0x00, 0x00, 0x8d, 0x32, 0xcf,
+            0xbd, 0x00, 0x00, 0x00, 0x09, 0x70, 0x48, 0x59, 0x73, 0x00, 0x00, 0x0b,
+            0x13, 0x00, 0x00, 0x0b, 0x13, 0x01, 0x00, 0x9a, 0x9c, 0x18, 0x00, 0x00,
+            0x00, 0x0e, 0x49, 0x44, 0x41, 0x54, 0x63, 0xa8, 0x97, 0x64, 0xaa, 0x27,
+            0x06, 0x33, 0x8c, 0x2a, 0xa4, 0xaf, 0x42, 0x00, 0xf9, 0xa6, 0x03, 0x21,
+            0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82
+        };
+
         [TestMethod]
         public void TestChunksAreCorrectlyParsed()
         {
@@ -112,6 +124,27 @@ namespace OverTheAirTests
         }
 
         [TestMethod]
+        public void TestWritingChunksAfterRecalculatingCRCProducesIdenticalBytesAsInput()
+        {
+            byte[] input = Simple10x10WhitePNG;
+            using (MemoryStream stream = new MemoryStream(Simple10x10WhitePNG))
+            {
+                PNGChunk[] chunks = PNGChunkParser.ChunksFromStream(stream).ToArray();
+                chunks = chunks.Select(c =>
+                {
+                    return new PNGChunk(c.TypeString, c.Data, PNGDecrusher.CalculateCRCForChunk(c.TypeString, c.Data));
+                }).ToArray();
+
+                MemoryStream output = new MemoryStream();
+                PNGChunkParser.WriteChunksWithHeader(chunks, output);
+
+                byte[] outputBytes = output.ToArray();
+
+                CollectionAssert.AreEqual(input, outputBytes);
+            }
+        }
+
+        [TestMethod]
         public void TestAppleChunkIsRemovedWhenDecrushing()
         {
             IEnumerable<PNGChunk> chunks = new List<PNGChunk>()
@@ -127,8 +160,6 @@ namespace OverTheAirTests
             Assert.AreEqual(PNGChunk.ChunkType.IDAT, fixedChunks.First().Type);
             Assert.AreEqual(PNGChunk.ChunkType.IDAT, fixedChunks.Last().Type);
         }
-
-
 
         [TestMethod]
         public void TestStrippedDeflateHeadersAreAddedBack()
@@ -160,21 +191,129 @@ namespace OverTheAirTests
             }
         }
 
-        [TestMethod]
-        public void TestDecrushedImageCanBeLoadedByDotNetImageClasses()
+        private byte[] DeflateBytes(byte[] input)
         {
-            using (MemoryStream crushed = new MemoryStream(Crushed10x10White))
+            using (MemoryStream originalDataStream = new MemoryStream(input))
+            using (MemoryStream deflatedDataStream = new MemoryStream())
+            using (DeflateStream deflateStream = new DeflateStream(deflatedDataStream, CompressionMode.Compress, true))
+            {
+                originalDataStream.CopyTo(deflateStream);
+                deflateStream.Close();
+
+                return deflatedDataStream.ToArray();
+            }
+        }
+
+        private byte[] DecompressZlibBytes(byte[] input)
+        {
+            using (MemoryStream zlibDataStream = new MemoryStream(input))
+            {
+                // ignore zlib header
+                zlibDataStream.ReadByte();
+                zlibDataStream.ReadByte();
+
+                using (DeflateStream deflateStream = new DeflateStream(zlibDataStream, CompressionMode.Decompress))
+                using (MemoryStream dezlibbedStream = new MemoryStream())
+                {
+                    deflateStream.CopyTo(dezlibbedStream);
+                    return dezlibbedStream.ToArray();
+                }
+            }
+        }
+
+        [TestMethod]
+        public void TestDecompressedDecrushedIDATDataIsSameAsOriginalDeflatedData()
+        {
+            byte[] originalData = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06 };
+            byte[] deflatedOriginalData = DeflateBytes(originalData);
+
+            List<PNGChunk> chunks = new List<PNGChunk>()
+                {
+                    new PNGChunk(PNGChunk.StringFromType(PNGChunk.ChunkType.CgBI), new byte[] { }, 0),
+                    new PNGChunk(PNGChunk.StringFromType(PNGChunk.ChunkType.IDAT), deflatedOriginalData, 0),
+                    new PNGChunk(PNGChunk.StringFromType(PNGChunk.ChunkType.IDAT), deflatedOriginalData, 0)
+                };
+
+            IEnumerable<PNGChunk> decrushedChunks = PNGDecrusher.DecrushChunks(chunks);
+            Assert.AreEqual(2, decrushedChunks.Count());
+
+            byte[] zlibData1 = decrushedChunks.First().Data;
+            byte[] zlibData2 = decrushedChunks.Last().Data;
+            
+            byte[] dezlibbedData1 = DecompressZlibBytes(zlibData1);
+            byte[] dezlibbedData2 = DecompressZlibBytes(zlibData2);
+
+            Assert.AreEqual(originalData.Length, dezlibbedData1.Length);
+            CollectionAssert.AreEqual(originalData, dezlibbedData1);
+
+            Assert.AreEqual(originalData.Length, dezlibbedData2.Length);
+            CollectionAssert.AreEqual(originalData, dezlibbedData2);
+        }
+
+        private Bitmap BitmapFromDecrushedImage(byte[] imageData)
+        {
+            using (MemoryStream crushed = new MemoryStream(imageData))
             using (MemoryStream decrushed = new MemoryStream())
             {
                 PNGDecrusher.DecrushPNGStreamToStream(crushed, decrushed);
+                byte[] decrushedBytes = decrushed.ToArray();
 
-                using (MemoryStream reopenedStream = new MemoryStream(decrushed.ToArray()))
+                return new Bitmap(new MemoryStream(decrushedBytes));
+            }
+        }
+
+        [TestMethod]
+        public void TestDecrushedImageCanBeLoadedByDotNetImageClasses()
+        {
+            using (Bitmap bitmap = BitmapFromDecrushedImage(CrushedFiftyPercentAlphaBlue10x10))
+            {
+                Assert.AreEqual(bitmap.Size, new Size(10, 10));
+                Assert.AreEqual(System.Drawing.Imaging.PixelFormat.Format32bppArgb, bitmap.PixelFormat);
+                Assert.AreEqual(System.Drawing.Imaging.ImageFormat.Png, bitmap.RawFormat);
+            }
+        }
+
+        [TestMethod]
+        public void TestDecrushedImagesHavePremultipliedAlphaAndPixelByteOrderFixed()
+        {
+            using (Bitmap bitmap = BitmapFromDecrushedImage(CrushedFiftyPercentAlphaBlue10x10))
+            {
+                Assert.AreEqual(bitmap.Size, new Size(10, 10));
+
+                Color pixel = bitmap.GetPixel(1, 1);
+                Assert.AreEqual(Color.FromArgb(128, 0, 0, 255), pixel);
+            }
+        }
+
+        [TestMethod]
+        [ExpectedException(typeof(InvalidDataException))]
+        public void TestExceptionOnNonAppleCrushedImages()
+        {
+            using (MemoryStream crushed = new MemoryStream(Simple10x10WhitePNG))
+            using (MemoryStream decrushed = new MemoryStream())
+            {
+                PNGDecrusher.DecrushPNGStreamToStream(crushed, decrushed);
+            }
+        }
+
+        [TestMethod]
+        public void TestCRCCalculation()
+        {
+            byte[][] validPNGs = 
+            {
+                 Simple10x10WhitePNG,
+                 Crushed10x10White,
+                 CrushedFiftyPercentAlphaBlue10x10
+            };
+
+            foreach (byte[] png in validPNGs)
+            {
+                IEnumerable<PNGChunk> chunks = PNGChunkParser.ChunksFromStream(new MemoryStream(Simple10x10WhitePNG));
+                foreach (PNGChunk chunk in chunks)
                 {
-                    Bitmap bitmap = new Bitmap(reopenedStream);
-                    Assert.AreEqual(bitmap.Size, new Size(10, 10));
-
-                    Color firstPixel = bitmap.GetPixel(0, 0);
-                    Assert.AreEqual(firstPixel, Color.FromArgb(255, 255, 255, 255));
+                    uint expectedCRC = chunk.DataCRC;
+                    uint recalculatedCRC = PNGDecrusher.CalculateCRCForChunk(chunk.TypeString, chunk.Data);
+                    Assert.AreEqual(expectedCRC, recalculatedCRC);
                 }
             }
         }
