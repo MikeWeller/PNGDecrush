@@ -152,7 +152,7 @@ namespace OverTheAirTests
         }
 
         [TestMethod]
-        public void TestStrippedDeflateHeadersAreAddedBack()
+        public void TestZlibHeadersAreAddedBack()
         {
             IEnumerable<PNGChunk> chunks = PNGChunkParser.ChunksFromStream(new MemoryStream(Crushed10x10White));
 
@@ -212,7 +212,7 @@ namespace OverTheAirTests
         }
 
         [TestMethod]
-        public void TestDecompressedDecrushedIDATDataIsSameAsOriginalDeflatedData()
+        public void TestDecrushedIDATDataIsSameAsOriginalAfterDecompressing()
         {
             byte[] originalData = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06 };
             byte[] deflatedOriginalData = DeflateBytes(originalData);
@@ -270,7 +270,7 @@ namespace OverTheAirTests
             using (MemoryStream crushed = new MemoryStream(imageData))
             using (MemoryStream decrushed = new MemoryStream())
             {
-                PNGDecrusher.DecrushPNGStreamToStream(crushed, decrushed);
+                PNGDecrusher.Decrush(crushed, decrushed);
                 decrushed.Position = 0;
                 return new Bitmap(decrushed);
             }
@@ -285,23 +285,6 @@ namespace OverTheAirTests
                 Assert.AreEqual(System.Drawing.Imaging.PixelFormat.Format32bppArgb, bitmap.PixelFormat);
                 Assert.AreEqual(System.Drawing.Imaging.ImageFormat.Png, bitmap.RawFormat);
             }
-        }
-
-        [TestMethod]
-        public void Debugging()
-        {
-            string inputFilePath = @"c:\Users\mike\Dropbox\OverTheAirTestFiles\Icon-72@2x_crushed.png";
-            string outputFilePath = @"c:\Users\mike\Dropbox\OverTheAirTestFiles\_test_decrushed.png";
-
-            using (FileStream inputStream = new FileStream(inputFilePath, FileMode.Open))
-            using (FileStream outputStream = new FileStream(outputFilePath, FileMode.Create))
-            {
-                PNGDecrusher.DecrushPNGStreamToStream(inputStream, outputStream);
-            }
-
-            IEnumerable<PNGChunk> inputChunks = PNGChunkParser.ChunksFromStream(new FileStream(inputFilePath, FileMode.Open));
-            IEnumerable<PNGChunk> outputChunks = PNGChunkParser.ChunksFromStream(new FileStream(outputFilePath, FileMode.Open));
-
         }
 
         [TestMethod]
@@ -323,7 +306,7 @@ namespace OverTheAirTests
             using (MemoryStream crushed = new MemoryStream(Simple10x10WhitePNG))
             using (MemoryStream decrushed = new MemoryStream())
             {
-                PNGDecrusher.DecrushPNGStreamToStream(crushed, decrushed);
+                PNGDecrusher.Decrush(crushed, decrushed);
             }
         }
 
