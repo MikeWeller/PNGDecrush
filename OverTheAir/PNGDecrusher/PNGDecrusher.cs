@@ -15,26 +15,153 @@ namespace OverTheAir.PNGDecrusher
     {
         public static void Decrush(Stream input, Stream output)
         {
-            IEnumerable<PNGChunk> decrushedChunks = DecrushChunksFromStream(input);
-            ReverseApplePixelOptimizationInChunks(decrushedChunks, output);
-        }
-
-        private static IEnumerable<PNGChunk> DecrushChunksFromStream(Stream input)
-        {
-            return DecrushChunks(PNGChunkParser.ChunksFromStream(input));
-        }
-
-        private static void ReverseApplePixelOptimizationInChunks(IEnumerable<PNGChunk> pngChunks, Stream output)
-        {
-            using (MemoryStream pngSoFar = new MemoryStream())
+            using (MemoryStream fixedChunksOutput = new MemoryStream())
             {
-                PNGChunkParser.WriteChunksWithHeader(pngChunks, pngSoFar);
-                pngSoFar.Position = 0;
-                ReverseApplePixelOptimizations(pngSoFar, output);
+                DecrushAtChunkLevel(input, fixedChunksOutput);
+                DecrushAtPixelLevel(fixedChunksOutput, output);
             }
         }
 
-        public static void ReverseApplePixelOptimizations(Stream pngInputStream, Stream outputStream)
+        private static void DecrushAtChunkLevel(Stream input, Stream output)
+        {
+            IEnumerable<PNGChunk> fixedChunks = DecrushChunks(PNGChunkParser.ChunksFromStream(input));
+            PNGChunkParser.WriteChunksAsPNG(fixedChunks, output);
+        }
+
+        public static IEnumerable<PNGChunk> DecrushChunks(IEnumerable<PNGChunk> chunks)
+        {
+            IEnumerable<PNGChunk> chunksWithoutAppleChunk = ChunksByRemovingAppleCgBIChunks(chunks);
+
+            if (chunksWithoutAppleChunk.Count() == chunks.Count())
+            {
+                throw new InvalidDataException("Could not find a CgBI chunk. Image wasn't crushed with Apple's -iohone option.");
+            }
+            
+            return ConvertIDATChunksFromDeflateToZlib(chunksWithoutAppleChunk);;
+        }
+
+        private static IEnumerable<PNGChunk> ConvertIDATChunksFromDeflateToZlib(IEnumerable<PNGChunk> inputChunks)
+        {
+            // Multiple IDAT chunks must be combined together to form a single DEFLATE payload.
+            // This payload is recompressed with zlib headers intact, and then split up into chunks again
+
+            IEnumerable<PNGChunk> idatChunks = inputChunks.Where(c => c.Type == PNGChunk.ChunkType.IDAT);
+            byte[] zlibData = RecompressedZlibDataFromChunks(idatChunks);
+
+            IEnumerable<PNGChunk> newIDATChunks = CreateIdatChunksFromData(zlibData, idatChunks.Count());
+
+            return ReplaceOldIdatChunksWithNewChunks(inputChunks, newIDATChunks);
+        }
+
+        private static IEnumerable<PNGChunk> CreateIdatChunksFromData(byte[] data, int numberOfChunks)
+        {
+            IEnumerable<byte[]> dataChunks = SplitBufferIntoChunks(data, numberOfChunks);
+            return dataChunks.Select(chunkData => IDATChunkWithBytes(chunkData));
+        }
+
+        private static byte[] RecompressedZlibDataFromChunks(IEnumerable<PNGChunk> idatChunks)
+        {
+            byte[] deflateData = CombinedDataFromChunks(idatChunks);
+            return ConvertDeflateToZlib(deflateData);
+        }
+
+        public static IEnumerable<byte[]> SplitBufferIntoChunks(byte[] input, int numberOfChunks)
+        {
+            List<byte[]> result = new List<byte[]>();
+
+            int bytesLeft = input.Length;
+            int currentInputIndex = 0;
+
+            for (int chunksLeft = numberOfChunks; chunksLeft > 0; chunksLeft--)
+            {
+                int maxChunkSize = (int)Math.Ceiling((double)bytesLeft / (double)chunksLeft);
+                int thisChunkSize = Math.Min(maxChunkSize, bytesLeft);
+
+                byte[] chunkData = SubArray(input, currentInputIndex, thisChunkSize);
+
+                currentInputIndex += thisChunkSize;
+                bytesLeft -= thisChunkSize;
+
+                result.Add(chunkData);
+            }
+
+            if (currentInputIndex != input.Length || bytesLeft != 0)
+            {
+                throw new InvalidOperationException();
+            }
+
+            return result;
+        }
+
+        private static TType[] SubArray<TType>(TType[] input, int startIndex, int count)
+        {
+            TType[] result = new TType[count];
+            Array.Copy(input, startIndex, result, 0, result.Length);
+            return result;
+        }
+
+        private static IEnumerable<PNGChunk> ReplaceOldIdatChunksWithNewChunks(IEnumerable<PNGChunk> chunks, IEnumerable<PNGChunk> newIdatChunks)
+        {
+            int indexOfFirstIdat = chunks.Select((c, i) => new { index = i, chunk = c })
+                                         .First(o => o.chunk.Type == PNGChunk.ChunkType.IDAT)
+                                         .index;
+
+            List<PNGChunk> result = chunks.Where(c => c.Type != PNGChunk.ChunkType.IDAT).ToList();
+            result.InsertRange(indexOfFirstIdat, newIdatChunks);
+            return result;
+        }
+
+        private static PNGChunk IDATChunkWithBytes(byte[] bytes)
+        {
+            string type = PNGChunk.StringFromType(PNGChunk.ChunkType.IDAT);
+            return new PNGChunk(type, bytes, CalculateCRCForChunk(type, bytes));
+        }
+
+        private static byte[] CombinedDataFromChunks(IEnumerable<PNGChunk> chunks)
+        {
+            int totalLength = chunks.Select(c => c.Data.Length).Sum();
+
+            byte[] result = new byte[totalLength];
+            int bytesWritten = 0;
+
+            foreach (PNGChunk chunk in chunks)
+            {
+                chunk.Data.CopyTo(result, bytesWritten);
+                bytesWritten += chunk.Data.Length;
+            }
+
+            return result;
+        }
+
+        private static byte[] ConvertDeflateToZlib(byte[] input)
+        {
+            using (MemoryStream deflateData = new MemoryStream(input))
+            using (System.IO.Compression.DeflateStream deflateStream = new System.IO.Compression.DeflateStream(deflateData, System.IO.Compression.CompressionMode.Decompress))
+            using (ZlibStream zlibStream = new ZlibStream(deflateStream, Ionic.Zlib.CompressionMode.Compress))
+            using (MemoryStream zlibData = new MemoryStream())
+            {
+                zlibStream.CopyTo(zlibData);
+                return zlibData.ToArray();
+            }
+        }
+
+        private static IEnumerable<PNGChunk> ChunksByRemovingAppleCgBIChunks(IEnumerable<PNGChunk> chunks)
+        {
+            return chunks.Where(c => c.Type != PNGChunk.ChunkType.CgBI);
+        }
+
+        public static uint CalculateCRCForChunk(string chunkType, byte[] chunkData)
+        {
+            byte[] chunkTypeBytes = Encoding.UTF8.GetBytes(chunkType);
+
+            Ionic.Crc.CRC32 crc32calculator = new Ionic.Crc.CRC32();
+            crc32calculator.SlurpBlock(chunkTypeBytes, 0, chunkTypeBytes.Length);
+            crc32calculator.SlurpBlock(chunkData, 0, chunkData.Length);
+
+            return (uint)crc32calculator.Crc32Result;
+        }
+
+        public static void DecrushAtPixelLevel(Stream pngInputStream, Stream outputStream)
         {
             using (Bitmap bitmap = new Bitmap(pngInputStream))
             {
@@ -43,6 +170,7 @@ namespace OverTheAir.PNGDecrusher
                     FixPixelsInBitmapData(bitmapData);
                 }
                 bitmap.UnlockBits(bitmapData);
+
                 bitmap.Save(outputStream, ImageFormat.Png);
             }
         }
@@ -56,21 +184,26 @@ namespace OverTheAir.PNGDecrusher
             uint bytesPerPixel = BytesPerPixelFromBitmapData(bitmapData);
 
             System.Runtime.InteropServices.Marshal.Copy(bitmapData.Scan0, pixelData, 0, pixelData.Length);
-
-            for (uint i = 0; i < totalBytes; i += bytesPerPixel)
             {
-                ReverseAppleByteSwap(pixelData, i);
+                FixPixelsInBuffer(pixelData, hasAlpha, bytesPerPixel);
+            }
+            System.Runtime.InteropServices.Marshal.Copy(pixelData, 0, bitmapData.Scan0, pixelData.Length);
+        }
+
+        private static void FixPixelsInBuffer(byte[] pixelData, bool hasAlpha, uint bytesPerPixel)
+        {
+            for (uint i = 0; i < pixelData.Length; i += bytesPerPixel)
+            {
+                ReverseRGBtoBGRByteSwap(pixelData, i);
 
                 if (hasAlpha)
                 {
                     ReversePremultipliedAlpha(pixelData, i);
                 }
             }
-
-            System.Runtime.InteropServices.Marshal.Copy(pixelData, 0, bitmapData.Scan0, pixelData.Length);
         }
 
-        private static void ReverseAppleByteSwap(byte[] pixelData, uint i)
+        private static void ReverseRGBtoBGRByteSwap(byte[] pixelData, uint i)
         {
             byte temp = pixelData[i + 2];
             pixelData[i + 2] = pixelData[i + 0];
@@ -125,133 +258,6 @@ namespace OverTheAir.PNGDecrusher
             pixelData[startOffset + 0] = (byte)((pixelData[startOffset + 0] * 255) / alpha);
             pixelData[startOffset + 1] = (byte)((pixelData[startOffset + 1] * 255) / alpha);
             pixelData[startOffset + 2] = (byte)((pixelData[startOffset + 2] * 255) / alpha);
-        }
-
-        public static IEnumerable<PNGChunk> DecrushChunks(IEnumerable<PNGChunk> chunks)
-        {
-            IEnumerable<PNGChunk> chunksMinusAppleChunk = ChunksByRemovingAppleCgBIChunks(chunks);
-            IEnumerable<PNGChunk> result = RecompressIDATChunksFromDeflateToZlib(chunksMinusAppleChunk);
-            
-            if (result.Count() == chunks.Count())
-            {
-                // there wasn't an Apple CgBI removed, throw an exception
-                throw new InvalidDataException("Could not find a CgBI chunk");
-            }
-
-            return result;
-        }
-
-        private static IEnumerable<PNGChunk> RecompressIDATChunksFromDeflateToZlib(IEnumerable<PNGChunk> inputChunks)
-        {
-            // need to combine the data for multiple IDAT chunks and deflate it together
-            // then split again at similar byte offsets... arg
-
-            IEnumerable<PNGChunk> idatChunks = inputChunks.Where(c => c.Type == PNGChunk.ChunkType.IDAT);
-
-            byte[] combinedChunkData = CombinedChunkData(idatChunks);
-            byte[] zlibFixed = RecompressDeflateDataAsZlib(combinedChunkData);
-
-            IEnumerable<int> offsetsWeNeedToSplitAt = idatChunks.Select(c => c.Data.Length).Take(idatChunks.Count() - 1);
-            IEnumerable<byte[]> newIDATDataChunks = SplitBufferAtOffsets(zlibFixed, offsetsWeNeedToSplitAt);
-
-            IEnumerable<PNGChunk> newIDATChunks = newIDATDataChunks.Select(bytes => IDATChunkFrombytes(bytes));
-
-            int indexOfFirstOriginalIdat = inputChunks.Select((c, i) => new { index = i, chunk = c }).First(o => o.chunk.Type == PNGChunk.ChunkType.IDAT).index;
-
-            List<PNGChunk> result = inputChunks.Where(c => c.Type != PNGChunk.ChunkType.IDAT).ToList();
-            result.InsertRange(indexOfFirstOriginalIdat, newIDATChunks);
-            return result;
-        }
-
-        private static PNGChunk IDATChunkFrombytes(byte[] bytes)
-        {
-            string type = PNGChunk.StringFromType(PNGChunk.ChunkType.IDAT);
-            return new PNGChunk(type, bytes, CalculateCRCForChunk(type, bytes));
-        }
-
-        public static IEnumerable<byte[]> SplitBufferAtOffsets(byte[] input, IEnumerable<int> offsets)
-        {
-            List<int> offsetsIncludingEndOfBuffer = offsets.ToList();
-            offsetsIncludingEndOfBuffer.Add(input.Length);
-
-            List<byte[]> result = new List<byte[]>();
-            int nextPositionToCopyFrom = 0;
-            int lastOffset = 0;
-
-            foreach (int i in offsetsIncludingEndOfBuffer)
-            {
-                byte[] chunk = new byte[i - lastOffset];
-                Array.Copy(input, nextPositionToCopyFrom, chunk, 0, chunk.Length);
-                nextPositionToCopyFrom += chunk.Length;
-                lastOffset = i;
-                result.Add(chunk);
-            }
-
-            return result;
-        }
-
-        private static byte[] CombinedChunkData(IEnumerable<PNGChunk> chunks)
-        {
-            int totalLength = chunks.Select(c => c.Data.Length).Sum();
-
-            byte[] result = new byte[totalLength];
-            int offset = 0;
-
-            foreach (PNGChunk chunk in chunks)
-            {
-                chunk.Data.CopyTo(result, offset);
-                offset += chunk.Data.Length;
-            }
-
-            return result;
-        }
-
-        private static byte[] RecompressDeflateDataAsZlib(byte[] input)
-        {
-            using (MemoryStream compressedData = new MemoryStream(input))
-            using (System.IO.Compression.DeflateStream deflateStream = new System.IO.Compression.DeflateStream(compressedData, System.IO.Compression.CompressionMode.Decompress))
-            using (ZlibStream zlibStream = new ZlibStream(deflateStream, Ionic.Zlib.CompressionMode.Compress))
-            using (MemoryStream zlibCompressed = new MemoryStream())
-            {
-                zlibStream.CopyTo(zlibCompressed);
-                return zlibCompressed.ToArray();
-            }
-        }
-
-        private static PNGChunk ChunkByFixingZlibHeader(PNGChunk chunk)
-        {
-            // Apple's -iphone addition to png crush strips the zlib header and checksum, so we
-            // deflate the chunk data and recompress as zlib
-
-            using (MemoryStream compressedData = new MemoryStream(chunk.Data))
-            using (System.IO.Compression.DeflateStream deflateStream = new System.IO.Compression.DeflateStream(compressedData, System.IO.Compression.CompressionMode.Decompress))
-            using (ZlibStream zlibStream = new ZlibStream(deflateStream, Ionic.Zlib.CompressionMode.Compress))
-            using (MemoryStream zlibCompressed = new MemoryStream())
-            {
-                zlibStream.CopyTo(zlibCompressed);
-
-                byte[] chunkData = zlibCompressed.ToArray();
-
-                uint crc32 = CalculateCRCForChunk(chunk.TypeString, chunkData);
-
-                return new PNGChunk(chunk.TypeString, zlibCompressed.ToArray(), crc32);
-            }
-        }
-
-        private static IEnumerable<PNGChunk> ChunksByRemovingAppleCgBIChunks(IEnumerable<PNGChunk> chunks)
-        {
-            return chunks.Where(c => c.Type != PNGChunk.ChunkType.CgBI);
-        }
-
-        public static uint CalculateCRCForChunk(string chunkType, byte[] chunkData)
-        {
-            byte[] chunkTypeBytes = Encoding.UTF8.GetBytes(chunkType);
-
-            Ionic.Crc.CRC32 crc32calculator = new Ionic.Crc.CRC32();
-            crc32calculator.SlurpBlock(chunkTypeBytes, 0, chunkTypeBytes.Length);
-            crc32calculator.SlurpBlock(chunkData, 0, chunkData.Length);
-            int crc32 = crc32calculator.Crc32Result;
-            return (uint)crc32;
         }
     }
 }

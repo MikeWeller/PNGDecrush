@@ -68,7 +68,8 @@ namespace OverTheAirTests
             };
 
         // somehow i messed up, and this actually contains pixels with RGBA(4, 50, 255, 127)
-        // NOT pure blue
+        // NOT pure blue. Although this works out well because we need to check all four
+        // color bytes
         byte[] CrushedFiftyPercentAlphaKindaBlue10x10 =  {
             0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x04,
             0x43, 0x67, 0x42, 0x49, 0x50, 0x00, 0x20, 0x02, 0x2b, 0xd5, 0xb3, 0x7f,
@@ -105,7 +106,7 @@ namespace OverTheAirTests
                 PNGChunk[] chunks = PNGChunkParser.ChunksFromStream(stream).ToArray();
 
                 MemoryStream output = new MemoryStream();
-                PNGChunkParser.WriteChunksWithHeader(chunks, output);
+                PNGChunkParser.WriteChunksAsPNG(chunks, output);
 
                 byte[] outputBytes = output.ToArray();
 
@@ -126,7 +127,7 @@ namespace OverTheAirTests
                 }).ToArray();
 
                 MemoryStream output = new MemoryStream();
-                PNGChunkParser.WriteChunksWithHeader(chunks, output);
+                PNGChunkParser.WriteChunksAsPNG(chunks, output);
 
                 byte[] outputBytes = output.ToArray();
 
@@ -333,23 +334,47 @@ namespace OverTheAirTests
         }
 
         [TestMethod]
-        public void TestSplitBufferWithNoOffsetsReturnsOriginalBuffer()
+        public void TestSplitBufferWithSingleChunk()
         {
             byte[] data = new byte[] { 0, 1, 2 };
-            IEnumerable<byte[]> split = PNGDecrusher.SplitBufferAtOffsets(data, new List<int>());
-            Assert.AreEqual(1, split.Count());
-            CollectionAssert.AreEqual(data, split.First());
+            IEnumerable<byte[]> chunks = PNGDecrusher.SplitBufferIntoChunks(data, 1);
+            Assert.AreEqual(1, chunks.Count());
+            CollectionAssert.AreEqual(data, chunks.First());
         }
 
         [TestMethod]
-        public void TestSplitBufferWithOffsetsReturnsCorrectBuffers()
+        public void TestSplitBufferIntoMultiple()
+        {
+            byte[] data = new byte[] { 0, 1, 2, 3 };
+            IEnumerable<byte[]> chunks = PNGDecrusher.SplitBufferIntoChunks(data, 3);
+            Assert.AreEqual(3, chunks.Count());
+
+            CollectionAssert.AreEqual(new byte[] { 0, 1 }, chunks.ToArray()[0]);
+            CollectionAssert.AreEqual(new byte[] { 2 }, chunks.ToArray()[1]);
+            CollectionAssert.AreEqual(new byte[] { 3 }, chunks.ToArray()[2]);
+        }
+
+        [TestMethod]
+        public void TestSplitBufferWithRemainder()
         {
             byte[] data = new byte[] { 0, 1, 2 };
-            IEnumerable<byte[]> split = PNGDecrusher.SplitBufferAtOffsets(data, new List<int>() { 1 });
-            Assert.AreEqual(2, split.Count());
+            IEnumerable<byte[]> chunks = PNGDecrusher.SplitBufferIntoChunks(data, 2);
+            Assert.AreEqual(2, chunks.Count());
 
-            CollectionAssert.AreEqual(new byte[] { 0 }, split.First());
-            CollectionAssert.AreEqual(new byte[] { 1, 2 }, split.Last());
+            CollectionAssert.AreEqual(new byte[] { 0, 1 }, chunks.ToArray()[0]);
+            CollectionAssert.AreEqual(new byte[] { 2 }, chunks.ToArray()[1]);
+        }
+
+        [TestMethod]
+        public void TestSplitBufferUsesGoodChunkSizes()
+        {
+            byte[] data = new byte[] { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+            IEnumerable<byte[]> chunks = PNGDecrusher.SplitBufferIntoChunks(data, 3);
+            Assert.AreEqual(3, chunks.Count());
+
+            CollectionAssert.AreEqual(new byte[] { 0, 1, 2, 3, 4, 5 }, chunks.ToArray()[0]);
+            CollectionAssert.AreEqual(new byte[] { 6, 7, 8, 9, 10 }, chunks.ToArray()[1]);
+            CollectionAssert.AreEqual(new byte[] { 11, 12, 13, 14, 15 }, chunks.ToArray()[2]);
         }
     }
 }

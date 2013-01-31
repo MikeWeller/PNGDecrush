@@ -59,7 +59,7 @@ namespace OverTheAir.PNGDecrusher
             return ((IStructuralEquatable)actualHeader).Equals(_PNGHeader, StructuralComparisons.StructuralEqualityComparer);
         }
 
-        public static void WriteChunksWithHeader(IEnumerable<PNGChunk> chunks, Stream output)
+        public static void WriteChunksAsPNG(IEnumerable<PNGChunk> chunks, Stream output)
         {
             using (BinaryWriter writer = new BinaryWriter(output, Encoding.UTF8, true))
             {
