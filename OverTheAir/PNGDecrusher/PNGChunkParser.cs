@@ -14,7 +14,7 @@ namespace OverTheAir.PNGDecrusher
 
         public static IEnumerable<PNGChunk> ChunksFromStream(Stream stream)
         {
-            using (BinaryReader reader = new BinaryReader(stream))
+            using (BinaryReader reader = new BinaryReader(stream, Encoding.UTF8, true))
             {
                 if (!TryReadPNGHeaderFromReader(reader))
                 {
