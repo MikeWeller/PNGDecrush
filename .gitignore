@@ -1,0 +1,9 @@
+bin
+obj
+Debug
+*.suo
+packages
+*.user
+TestResults
+*/App_Data/user_uploads
+PublishProfiles
