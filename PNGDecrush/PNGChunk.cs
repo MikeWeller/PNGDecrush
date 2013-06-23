@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Web;
 
-namespace OverTheAir.PNGDecrusher
+namespace PNGDecrush
 {
     public class PNGChunk
     {

@@ -6,7 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Web;
 
-namespace OverTheAir.PNGDecrusher
+namespace PNGDecrush
 {
     public class PNGChunkParser
     {

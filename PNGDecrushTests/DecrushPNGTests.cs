@@ -1,6 +1,6 @@
 ﻿using System;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using OverTheAir.PNGDecrusher;
+using PNGDecrush;
 using System.IO;
 using System.Collections.Generic;
 using System.Linq;
@@ -9,7 +9,7 @@ using System.Text;
 using System.IO.Compression;
 using System.Drawing;
 
-namespace OverTheAirTests
+namespace PNGDecrush
 {
     [TestClass]
     public class DecrushPNGTests
