@@ -14,22 +14,21 @@ namespace PNGDecrush
 
         public static IEnumerable<PNGChunk> ChunksFromStream(Stream stream)
         {
-            using (BinaryReader reader = new BinaryReader(stream, Encoding.UTF8, true))
+            BinaryReader reader = new BinaryReader(stream, Encoding.UTF8);
+
+            if (!TryReadPNGHeaderFromReader(reader))
             {
-                if (!TryReadPNGHeaderFromReader(reader))
-                {
-                    throw new InvalidDataException("Could not find the PNG header");
-                }
-
-                List<PNGChunk> result = new List<PNGChunk>();
-                PNGChunk chunk;
-                while ((chunk = ReadChunk(reader)) != null)
-                {
-                    result.Add(chunk);
-                }
-
-                return result;
+                throw new InvalidDataException("Could not find the PNG header");
             }
+
+            List<PNGChunk> result = new List<PNGChunk>();
+            PNGChunk chunk;
+            while ((chunk = ReadChunk(reader)) != null)
+            {
+                result.Add(chunk);
+            }
+
+            return result;
         }
 
         private static PNGChunk ReadChunk(BinaryReader reader)
@@ -56,19 +55,18 @@ namespace PNGDecrush
         {
             byte[] actualHeader = reader.ReadBytes(_PNGHeader.Length);
 
-            return ((IStructuralEquatable)actualHeader).Equals(_PNGHeader, StructuralComparisons.StructuralEqualityComparer);
+            return actualHeader.SequenceEqual(_PNGHeader);
         }
 
         public static void WriteChunksAsPNG(IEnumerable<PNGChunk> chunks, Stream output)
         {
-            using (BinaryWriter writer = new BinaryWriter(output, Encoding.UTF8, true))
-            {
-                writer.Write(_PNGHeader);
+            BinaryWriter writer = new BinaryWriter(output, Encoding.UTF8);
 
-                foreach (PNGChunk chunk in chunks)
-                {
-                    WriteChunkToWriter(chunk, writer);
-                }
+            writer.Write(_PNGHeader);
+
+            foreach (PNGChunk chunk in chunks)
+            {
+                WriteChunkToWriter(chunk, writer);
             }
         }
 
