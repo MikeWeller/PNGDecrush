@@ -2,6 +2,8 @@
 
 PNGDecrush is a C# library for reversing the optimization process that is applied to PNG files in an iOS project.
 
+现在支持.Net 2.0
+
 ### Background
 
 When building an iOS app using Xcode, PNG files are run through the `pngcrush` tool with some proprietry Apple modifications (accessed through the `-iphone` option).
