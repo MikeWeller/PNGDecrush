@@ -140,7 +140,15 @@ namespace PNGDecrush
             using (ZlibStream zlibStream = new ZlibStream(deflateStream, Ionic.Zlib.CompressionMode.Compress))
             using (MemoryStream zlibData = new MemoryStream())
             {
-                zlibStream.CopyTo(zlibData);
+                var bufferSize = 81920;
+                byte[] array = new byte[bufferSize];
+
+                int count;
+                while ((count = zlibStream.Read(array, 0, bufferSize)) != 0)
+                {
+                    zlibData.Write(array, 0, count);
+                }
+
                 return zlibData.ToArray();
             }
         }
