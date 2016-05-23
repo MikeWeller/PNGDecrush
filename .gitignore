@@ -4,6 +4,8 @@ Debug
 *.suo
 packages
 *.user
+.vs/
+*.lock.json
 TestResults
 */App_Data/user_uploads
 PublishProfiles
