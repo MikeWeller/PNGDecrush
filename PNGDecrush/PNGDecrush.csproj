@@ -30,9 +30,6 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="Ionic.Zip">
-      <HintPath>packages\DotNetZip.1.9.1.8\lib\net20\Ionic.Zip.dll</HintPath>
-    </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Drawing" />
@@ -44,13 +41,11 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="BinaryReaderNetworkHostOrderAdditions.cs" />
+    <Compile Include="CRC32.cs" />
     <Compile Include="PNGChunk.cs" />
     <Compile Include="PNGChunkParser.cs" />
     <Compile Include="PNGDecrusher.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="packages.config" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
