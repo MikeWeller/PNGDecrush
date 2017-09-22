@@ -1,0 +1,8 @@
+image: Previous Visual Studio 2017
+
+build_script:
+  - cmd: cd PNGDecrush
+  - cmd: dotnet restore
+  - cmd: dotnet build -c Release --version-suffix r%APPVEYOR_BUILD_NUMBER%
+  - cmd: dotnet pack -c Release --version-suffix r%APPVEYOR_BUILD_NUMBER%
+  - ps: Push-AppveyorArtifact "bin\Release\PNGDecrush.1.0.1-r$($env:APPVEYOR_BUILD_NUMBER).nupkg"

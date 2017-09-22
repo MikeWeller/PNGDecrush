@@ -1,4 +1,4 @@
-﻿using Ionic.Zlib;
+﻿using Ionic.Crc;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -6,8 +6,8 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Net;
 using System.Text;
-using System.Web;
 
 namespace PNGDecrush
 {
@@ -36,8 +36,8 @@ namespace PNGDecrush
             {
                 throw new InvalidDataException("Could not find a CgBI chunk. Image wasn't crushed with Apple's -iohone option.");
             }
-            
-            return ConvertIDATChunksFromDeflateToZlib(chunksWithoutAppleChunk);;
+
+            return ConvertIDATChunksFromDeflateToZlib(chunksWithoutAppleChunk); ;
         }
 
         private static IEnumerable<PNGChunk> ConvertIDATChunksFromDeflateToZlib(IEnumerable<PNGChunk> inputChunks)
@@ -135,14 +135,72 @@ namespace PNGDecrush
 
         private static byte[] ConvertDeflateToZlib(byte[] input)
         {
-            using (MemoryStream deflateData = new MemoryStream(input))
-            using (System.IO.Compression.DeflateStream deflateStream = new System.IO.Compression.DeflateStream(deflateData, System.IO.Compression.CompressionMode.Decompress))
-            using (ZlibStream zlibStream = new ZlibStream(deflateStream, Ionic.Zlib.CompressionMode.Compress))
-            using (MemoryStream zlibData = new MemoryStream())
+            // Basically, we wrap the deflate stram in a zlib format.
+            // Because zlib includes a checksum of the decompressed data,
+            // we need to decompress all data.
+
+            // The zlib format is as follows:
+            // zlib format (wrapper around the deflate format):
+            // +---+---+
+            // |CMF|FLG| (2 bytes)
+            // +---+---+
+            // +---+---+---+---+
+            // |     DICTID    | (4 bytes. Present only when FLG.FDICT is set.) - Mostly not set
+            // +---+---+---+---+
+            // +=====================+
+            // |...compressed data...| (variable size of data)
+            // +=====================+
+            // +---+---+---+---+
+            // |     ADLER32   |  (4 bytes of checksum)
+            // +---+---+---+---+
+            //
+            // +---+---+
+            // |CMF|FLG|
+            // +---+---+
+            //
+            // 78 01 - No Compression/low
+            // 78 9C - Default Compression
+            // 78 DA - Best Compression 
+
+            byte[] bytes;
+
+            using (MemoryStream compressedData = new MemoryStream(input))
+            using (DeflateStream deflateStream = new DeflateStream(compressedData, CompressionMode.Decompress))
+            using (MemoryStream decompressedData = new MemoryStream())
             {
-                zlibStream.CopyTo(zlibData);
-                return zlibData.ToArray();
+                // Decompress all data
+                deflateStream.CopyTo(decompressedData);
+                bytes = decompressedData.ToArray();
             }
+
+            using (MemoryStream recompressedData = new MemoryStream())
+            {
+                recompressedData.WriteByte(0x78);
+                recompressedData.WriteByte(0x9C);
+                using (var compressor = new DeflateStream(recompressedData, CompressionMode.Compress, true))
+                {
+                    compressor.Write(bytes, 0, bytes.Length);
+                    compressor.Flush();
+                }
+
+                recompressedData.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder(Adler32(bytes))), 0, sizeof(uint));
+
+                return recompressedData.ToArray();
+            }
+        }
+
+
+        // naive implementation of adler-32 checksum
+        static int Adler32(byte[] bytes)
+        {
+            const uint a32mod = 65521;
+            uint s1 = 1, s2 = 0;
+            foreach (byte b in bytes)
+            {
+                s1 = (s1 + b) % a32mod;
+                s2 = (s2 + s1) % a32mod;
+            }
+            return unchecked((int)((s2 << 16) + s1));
         }
 
         private static IEnumerable<PNGChunk> ChunksByRemovingAppleCgBIChunks(IEnumerable<PNGChunk> chunks)
@@ -154,7 +212,7 @@ namespace PNGDecrush
         {
             byte[] chunkTypeBytes = Encoding.UTF8.GetBytes(chunkType);
 
-            Ionic.Crc.CRC32 crc32calculator = new Ionic.Crc.CRC32();
+            CRC32 crc32calculator = new CRC32();
             crc32calculator.SlurpBlock(chunkTypeBytes, 0, chunkTypeBytes.Length);
             crc32calculator.SlurpBlock(chunkData, 0, chunkData.Length);
 

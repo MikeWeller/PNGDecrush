@@ -1,0 +1,42 @@
+{
+  "version": "1.0.0-*",
+
+  "authors": [ "Mike Weller" ],
+  "title": "PNGDecrush - Decrush iOS PNG files",
+  "description": "PNGDecrush is a C# library for reversing the optimization process that is applied to PNG files in an iOS project.",
+
+  "packOptions": {
+    "licenseUrl": "https://github.com/MikeWeller/PNGDecrush/blob/master/LICENSE",
+    "owners": [ "Mike Weller" ],
+    "repository": {
+      "type": "git",
+      "url": "https://github.com/MikeWeller/PNGDecrush/"
+    },
+  },
+
+  "dependencies": {
+  },
+
+  "buildOptions": {
+    "keyFile": "PNGDecrush.snk",
+    "strongName": true
+  },
+
+
+  "frameworks": {
+    "netstandard1.3": {
+      "dependencies": {
+        "CoreCompat.System.Drawing": "1.0.0-beta006",
+        "System.IO.Compression": "4.1.0",
+        "System.Linq": "4.1.0",
+        "System.Net.Primitives": "4.0.11"
+      }
+    },
+
+    "net45": {
+      "frameworkAssemblies": {
+        "System.Drawing": "4.0.0.0"
+      }
+    }
+  }
+}
